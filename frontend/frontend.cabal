@@ -1,0 +1,35 @@
+name:                frontend
+version:             0.1.0.0
+-- synopsis:
+-- description:
+license:             BSD3
+license-file:        LICENSE
+author:              Anton Felix Lorenzen
+maintainer:          anfelor@posteo.de
+-- copyright:
+-- category:
+build-type:          Simple
+extra-source-files:  CHANGELOG.md
+cabal-version:       >=1.10
+
+executable frontend
+  main-is:            Main.hs
+  other-modules:
+    InBrowser
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  default-extensions:
+    DeriveFunctor
+    GeneralizedNewtypeDeriving
+  build-depends: base >= 4.12 && < 4.13
+               , Naproche-SAD
+               , containers
+               , bytestring
+               , mtl
+               , text
+               , binary
+               , time
+               , filepath
+               , jsaddle
+               , ghcjs-base >= 0.2.0.0 && < 0.2.0.1
+               , aeson
