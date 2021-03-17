@@ -29,10 +29,10 @@ onmessage = function(msg) {
         if(closure !== null) {
             var cl = closure
             closure = null;
-            cl(msg);
+            cl(msg.data);
         } else {
             console.log("Unhandled by Naproche Worker: ");
-            console.log(msg);
+            console.log(msg.data);
         }
     }
 };
@@ -40,7 +40,11 @@ onmessage = function(msg) {
 var requestMessage = function(msg, c) {
     postMessage(msg);
     closure = c;
-}
+};
+
+var writeMessage = function(msg, c) {
+    postMessage(msg);
+};
 ```
 
   7. Now you can include `all.js` as a webworker and communicate with it :)

@@ -14,7 +14,7 @@ import Control.Monad
 import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.State
-import Data.Binary (decode, encode)
+import Data.Binary (decodeOrFail, encode, Binary)
 import Data.Text (Text)
 import System.FilePath
 import System.IO
@@ -50,17 +50,15 @@ main  = do
   (ConfigReceive args initOpt proversFile) <- getConfig
   let args0 = map Text.unpack args
   (opts0, pk, mFileName) <- readArgs' args0 initOpt
-  text0 <- (map (uncurry ProofTextInstr) (reverse opts0) ++) <$> case mFileName of
-    Nothing -> do
-      stdin <- getContents
-      pure $ [ProofTextInstr noPos $ GetArgument (Text pk) (Text.pack stdin)]
-    Just f -> do
-      pure $ [ProofTextInstr noPos $ GetArgument (Read pk) (Text.pack f)]
+  let text0 = (map (uncurry ProofTextInstr) (reverse opts0) ++) $ case mFileName of
+        Nothing -> Prelude.error $ "Webnaproche does not support stdin."
+        Just f -> [ProofTextInstr noPos $ GetArgument (Read pk) (Text.pack f)]
   let opts1 = map snd opts0
 
-  if askFlag Help False opts1 then
+  if askFlag Help False opts1 then do
     output undefined undefined undefined (GetOpt.usageInfo usageHeader options)
-  else consoleMainBody opts1 text0 proversFile
+  else do
+    consoleMainBody opts1 text0 proversFile
 
 readArgs' :: (MonadIO m, Comm m) => [String] -> Text -> m ([(Pos, Instr)], ParserKind, Maybe FilePath)
 readArgs' args initFileContent = do
@@ -80,7 +78,7 @@ consoleMainBody opts0 text0 proversFile = do
 -- | Instances for the Naproche Syscalls
 -- Most are handled by sending a message to the parent worker thread.
 
-foreign import javascript unsafe "sendMessage($1);"
+foreign import javascript unsafe "writeMessage($1);"
     sendMessage :: JSVal -> IO ()
 
 foreign import javascript interruptible "requestMessage($1, $c);"
@@ -156,11 +154,16 @@ data CacheReceive = CacheReceive
 
 instance FromJSON CacheReceive
 
+decodeMay :: Binary a => BS.ByteString -> Maybe a
+decodeMay bs = case decodeOrFail bs of
+  Left _ -> Nothing
+  Right (_, _, a) -> Just a
+
 instance CacheStorage IO where
   readFileCache f = do
     json <- toJSVal $ Aeson.toJSON $ CacheSend "read" (Text.pack f) ""
     resp <- fromJSVal =<< requestMessage json
-    case resp >>= fromJSON >>= decode . BS.fromStrict . Text.encodeUtf8 . cacheContent of
+    case resp >>= fromJSON >>= decodeMay . BS.fromStrict . Text.encodeUtf8 . cacheContent of
       Nothing -> pure mempty
       Just c -> pure c { lastRun = 1 + lastRun c }
 
