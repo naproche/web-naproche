@@ -137,6 +137,7 @@ instance Comm IO where
 
   reportsString _ = pure ()
   pideContext = pure Nothing
+  textFieldWidth = pure 120
 
 data CacheSend = CacheSend
   { cacheReq :: Text
