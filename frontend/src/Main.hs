@@ -121,7 +121,7 @@ instance FromJSON ReadLibraryReceive
 
 instance File.MonadFile IO where
   read f = do
-    req <- toJSVal $ Aeson.toJSON $ ReadLibrarySend "library" (UTF8.decode f)
+    req <- toJSVal $ Aeson.toJSON $ ReadLibrarySend "library" (Text.pack f)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure (make_bytes $ fileContent t)
@@ -198,6 +198,6 @@ instance Program.RunProverContext WEB where
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure $ Process_Result.make 0
-        (map UTF8.encode proverOut)
-        (map UTF8.encode proverErr) Timing.zero
+        (map UTF8.encode (proverOut resp))
+        (map UTF8.encode (proverErr resp)) Timing.zero
       _ -> Prelude.error $ "Ensure in JS that this never happens!"
