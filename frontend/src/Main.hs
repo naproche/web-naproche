@@ -46,6 +46,7 @@ import qualified Isabelle.UTF8 as UTF8
 import qualified Isabelle.Position as Position
 import qualified Isabelle.YXML as YXML
 import qualified Isabelle.Process_Result as Process_Result
+import qualified Isabelle.Timing as Timing
 import qualified Isabelle.File
 import Isabelle.Library
 
@@ -62,8 +63,8 @@ main  = do
   Console.setup
 
   -- command line and init file
-  args0 <- args $ getConfig
-  (opts0, pk, fileArg) <- SAD.Main.readArgs args0
+  args0 <- args <$> getConfig
+  (opts0, pk, fileArg) <- SAD.Main.readArgs (map Text.unpack args0)
   text0 <- (map (uncurry ProofTextInstr) (reverse opts0) ++) <$> case fileArg of
     Nothing -> Prelude.error $ "Reading from stdin not implemented"
     Just name -> do
@@ -142,7 +143,7 @@ data WEB = WEB
 instance Program.MessageExchangeContext WEB where
   read_message WEB = Prelude.error $ "Reading messages is not implemented"
   write_message WEB msgs = do
-    forM msgs $ \msg -> do
+    forM_ msgs $ \msg -> do
       json <- toJSVal $ Aeson.toJSON $ CommSend "output" (UTF8.decode msg) 
       sendMessage json
   is_pide WEB = False
@@ -182,7 +183,8 @@ instance ToJSON RunProverSend where
   toEncoding = Aeson.genericToEncoding (removePrefix "prover")
 
 data RunProverReceive = RunProverReceive
-  { proverOut :: Text
+  { proverOut :: [Text]
+  , proverErr :: [Text]
   } deriving (Show, Generic)
 
 instance FromJSON RunProverReceive
@@ -195,5 +197,7 @@ instance Program.RunProverContext WEB where
        (UTF8.decode $ Bash.get_input bparams)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
-      Just t -> pure (0, proverOut t)
+      Just t -> pure $ Process_Result.make 0
+        (map UTF8.encode proverOut)
+        (map UTF8.encode proverErr) Timing.zero
       _ -> Prelude.error $ "Ensure in JS that this never happens!"
