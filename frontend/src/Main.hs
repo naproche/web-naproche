@@ -63,10 +63,6 @@ main :: IO ()
 main  = do
   Console.setup
 
-  -- Create dummy env variables for all provers
-  forM_ Prover.list $ \p -> do
-    Environment.setEnv (UTF8.decode (Prover.get_variable p)) (UTF8.decode (Prover.get_name p))
-
   -- command line and init file
   args0 <- args <$> getConfig
   (opts0, pk, fileArg) <- SAD.Main.readArgs (map Text.unpack args0)
@@ -195,11 +191,11 @@ data RunProverReceive = RunProverReceive
 instance FromJSON RunProverReceive
 
 instance Program.RunProverContext WEB where
-  runProver WEB bparams = do
+  runProver WEB prover input = do
     req <- toJSVal $ Aeson.toJSON $ RunProverSend "prover"
-       (UTF8.decode $ head $ Bash.get_script bparams) 
-       (map UTF8.decode $ tail $ Bash.get_script bparams)
-       (UTF8.decode $ Bash.get_input bparams)
+       (UTF8.decode $ Prover.get_name prover) 
+       (map UTF8.decode $ Prover.get_args prover)
+       (UTF8.decode input)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure $ Process_Result.make 0
