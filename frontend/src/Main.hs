@@ -141,7 +141,7 @@ instance ToJSON CommSend where
 data WEB = WEB
 
 instance Program.MessageExchangeContext WEB where
-  read_message WEB = Prelude.error $ "Reading messages is not implemented"
+  read_message WEB = pure Nothing
   write_message WEB msgs = do
     forM_ msgs $ \msg -> do
       json <- toJSVal $ Aeson.toJSON $ CommSend "output" (UTF8.decode msg) 
