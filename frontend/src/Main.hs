@@ -74,7 +74,7 @@ main  = do
   if getInstr helpParam opts1 then
     putStr (GetOpt.usageInfo SAD.Main.usageHeader SAD.Main.options)
   else do
-        Program.init_console
+        Program.init_web
         rc <- do
           SAD.Main.mainBody opts1 text0 fileArg
             `catch` (\Exception.UserInterrupt -> do
@@ -86,6 +86,9 @@ main  = do
               Console.stderr (Exception.displayException err)
               return 1)
         Console.exit rc
+
+init_web :: IO WEB
+init_web = init_thread WEB
 
 -- | Instances for the Naproche Syscalls
 -- Most are handled by sending a message to the parent worker thread.
