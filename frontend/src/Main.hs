@@ -2,78 +2,91 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE JavaScriptFFI, CPP #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Main where
 
-import Prelude hiding (error)
-import qualified Prelude as Prelude
-import Data.Maybe
-import Data.Map.Strict (Map)
-import qualified Data.ByteString as ByteString
-import Control.Monad
 import Control.Exception
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.State
+import Data.Aeson (ToJSON, FromJSON)
 import Data.Binary (decodeOrFail, encode, Binary)
+import Data.Map.Strict (Map)
+import Data.Maybe
 import Data.Text (Text)
+import GHC.Generics
+import GHCJS.Marshal
+import GHCJS.Types
+import Prelude hiding (error)
 import System.FilePath
 import System.IO
 import System.IO.Error
-import GHC.Generics
-import Data.Aeson (ToJSON, FromJSON)
-
-import GHCJS.Types
-import GHCJS.Marshal
 
 import qualified Control.Exception as Exception
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified Data.Aeson as Aeson
-import qualified System.Exit as Exit
+import qualified Data.Text.Lazy as Text
+import qualified Prelude as Prelude
 import qualified System.Console.GetOpt as GetOpt
+import qualified System.Environment as Environment
+import qualified System.Exit as Exit
 
-import SAD.Core.Message
-import SAD.Core.SourcePos
-import SAD.Core.Cache (CacheStorage(..), FileCache(..))
-import SAD.Core.Provers (Prover(..), readProverDatabase)
-import SAD.Core.Prove (RunProver(..))
-import SAD.Core.Reader (HasLibrary(..), parseInit)
-import SAD.Data.Instr (Instr(..), Flag(..), askFlag, Argument(..), askArgument, noPos, Pos, ParserKind)
-import SAD.Data.Text.Block (ProofText(..))
-import SAD.Main
+import qualified Isabelle.Naproche as Naproche
+import qualified Isabelle.Bash as Bash
+import qualified Isabelle.Options as Options
+import qualified Isabelle.Isabelle_Thread as Isabelle_Thread
+import qualified Isabelle.UUID as UUID
+import qualified Isabelle.UTF8 as UTF8
+import qualified Isabelle.Position as Position
+import qualified Isabelle.YXML as YXML
+import qualified Isabelle.Process_Result as Process_Result
+import qualified Isabelle.Isabelle_System as Isabelle_System
+import qualified Isabelle.File
+import Isabelle.Library
+
+import SAD.API
+import SAD.Data.Instr
+import qualified Naproche.Console as Console
+import qualified Naproche.File as File
+import qualified Naproche.Program as Program
+import qualified SAD.Core.Message as Message
+import qualified SAD.Main
 
 main :: IO ()
 main  = do
+  Console.setup
+
   -- command line and init file
-  (ConfigReceive args initOpt proversFile) <- getConfig
-  let args0 = map Text.unpack args
-  (opts0, pk, mFileName) <- readArgs' args0 initOpt
-  let text0 = (map (uncurry ProofTextInstr) (reverse opts0) ++) $ case mFileName of
-        Nothing -> Prelude.error $ "Webnaproche does not support stdin."
-        Just f -> [ProofTextInstr noPos $ GetArgument (Read pk) (Text.pack f)]
+  args0 <- args $ getConfig
+  (opts0, pk, fileArg) <- SAD.Main.readArgs args0
+  text0 <- (map (uncurry ProofTextInstr) (reverse opts0) ++) <$> case fileArg of
+    Nothing -> do
+      stdin <- getContents
+      pure [ProofTextInstr Position.none $ GetArgument (Text pk) (Text.pack stdin)]
+    Just name -> do
+      pure [ProofTextInstr Position.none $ GetArgument (File pk) (Text.pack name)]
   let opts1 = map snd opts0
 
-  if askFlag Help False opts1 then do
-    output undefined undefined undefined (GetOpt.usageInfo usageHeader options)
+  if getInstr helpParam opts1 then
+    putStr (GetOpt.usageInfo SAD.Main.usageHeader SAD.Main.options)
   else do
-    consoleMainBody opts1 text0 proversFile
-
-readArgs' :: (MonadIO m, Comm m) => [String] -> Text -> m ([(Pos, Instr)], ParserKind, Maybe FilePath)
-readArgs' args initFileContent = do
-  let (instrs, files, errs) = GetOpt.getOpt GetOpt.Permute options args
-  unless (null errs) $ errorWithoutStackTrace (unlines errs)
-  initFile <- parseInit "init.opt" initFileContent
-
-  let initialOpts = initFile ++ map (noPos,) instrs
-  readArgs initialOpts files
-
-consoleMainBody :: [Instr] -> [ProofText] -> Text -> IO ()
-consoleMainBody opts0 text0 proversFile = do
-  provers <- readProverDatabase "provers.json" $ Text.encodeUtf8 proversFile
-  exit <- mainBody provers opts0 text0
-  Exit.exitWith exit
+        Program.init_console
+        rc <- do
+          SAD.Main.mainBody opts1 text0 fileArg
+            `catch` (\Exception.UserInterrupt -> do
+              Program.exit_thread
+              Console.stderr ("Interrupt" :: String)
+              return Process_Result.interrupt_rc)
+            `catch` (\(err :: Exception.SomeException) -> do
+              Program.exit_thread
+              Console.stderr (Exception.displayException err)
+              return 1)
+        Console.exit rc
 
 -- | Instances for the Naproche Syscalls
 -- Most are handled by sending a message to the parent worker thread.
@@ -92,86 +105,6 @@ fromJSON x = case Aeson.fromJSON x of
   Aeson.Success a -> Just a
   Aeson.Error _ -> Nothing
 
-data ConfigSend = ConfigSend
-  { configReq :: Text
-  } deriving (Generic, Show)
-
-instance ToJSON ConfigSend where
-  toJSON     = Aeson.genericToJSON (removePrefix "config")
-  toEncoding = Aeson.genericToEncoding (removePrefix "config")
-
-data ConfigReceive = ConfigReceive
-  { args :: [Text]
-  , initFile :: Text
-  , proversFile :: Text
-  } deriving (Generic, Show)
-
-instance FromJSON ConfigReceive
-
-getConfig :: IO ConfigReceive
-getConfig = do
-  json <- toJSVal $ Aeson.toJSON $ ConfigSend "config"
-  resp <- fromJSVal =<< requestMessage json
-  case resp >>= fromJSON of
-    Nothing -> Prelude.error $ "Config malformed!"
-    Just c -> pure c
-
-data CommSend = CommSend
-  { commReq :: Text
-  , commMsg :: Text
-  } deriving (Generic, Show)
-
-instance ToJSON CommSend where
-  toJSON     = Aeson.genericToJSON (removePrefix "comm")
-  toEncoding = Aeson.genericToEncoding (removePrefix "comm")
-
-instance Comm IO where
-  output _ _ _ msg = do
-    json <- toJSVal $ Aeson.toJSON $ CommSend "output" (Text.pack msg)
-    sendMessage json
-  
-  error _ _ msg = do
-    json <- toJSVal $ Aeson.toJSON $ CommSend "error" (Text.pack msg)
-    sendMessage json
-    Prelude.error $ "Naproche terminated: " ++ msg
-
-  reportsString _ = pure ()
-  pideContext = pure Nothing
-  textFieldWidth = pure 120
-
-data CacheSend = CacheSend
-  { cacheReq :: Text
-  , cacheFileName :: Text
-  , cacheFileContent :: Text -- todo: consider blobs
-  } deriving (Show, Generic)
-
-instance ToJSON CacheSend where
-  toJSON     = Aeson.genericToJSON (removePrefix "cache")
-  toEncoding = Aeson.genericToEncoding (removePrefix "cache")
-
-data CacheReceive = CacheReceive
-  { cacheContent :: Text
-  } deriving (Show, Generic)
-
-instance FromJSON CacheReceive
-
-decodeMay :: Binary a => BS.ByteString -> Maybe a
-decodeMay bs = case decodeOrFail bs of
-  Left _ -> Nothing
-  Right (_, _, a) -> Just a
-
-instance CacheStorage IO where
-  readFileCache f = do
-    json <- toJSVal $ Aeson.toJSON $ CacheSend "read" (Text.pack f) ""
-    resp <- fromJSVal =<< requestMessage json
-    case resp >>= fromJSON >>= decodeMay . BS.fromStrict . Text.encodeUtf8 . cacheContent of
-      Nothing -> pure mempty
-      Just c -> pure c { lastRun = 1 + lastRun c }
-
-  writeFileCache f c = do
-    json <- toJSVal $ Aeson.toJSON $ CacheSend "write" (Text.pack f) (Text.decodeUtf8 $ BS.toStrict $ encode c)
-    sendMessage json
-
 data ReadLibrarySend = ReadLibrarySend
   { readReq :: Text
   , readFileName :: Text
@@ -187,13 +120,57 @@ data ReadLibraryReceive = ReadLibraryReceive
 
 instance FromJSON ReadLibraryReceive
 
-instance HasLibrary IO where
-  readLibrary f = do
+instance File.MonadFile IO where
+  read f = do
     req <- toJSVal $ Aeson.toJSON $ ReadLibrarySend "library" (Text.pack f)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
-      Just t -> pure (f, fileContent t)
+      Just t -> pure (make_bytes $ fileContent t)
       _ -> Prelude.error $ "Ensure in JS that this never happens!"
+  write f b = Prelude.error $ "Writing files not implemented"
+  append f b = Prelude.error $ "Appending to files not implemented"
+
+data CommSend = CommSend
+  { commReq :: Text
+  , commMsg :: Text
+  } deriving (Generic, Show)
+
+instance ToJSON CommSend where
+  toJSON     = Aeson.genericToJSON (removePrefix "comm")
+  toEncoding = Aeson.genericToEncoding (removePrefix "comm")
+
+data WEB = WEB
+
+instance MessageExchangeContext WEB where
+  read_message WEB = Prelude.error $ "Reading messages is not implemented"
+  write_message (PIDE socket _) msgs = do
+    forM msgs $ \msg -> do
+      json <- toJSVal $ Aeson.toJSON $ CommSend "output" (UTF8.decode msg) 
+      sendMessage json
+  is_pide WEB = False
+  get_options WEB = Nothing
+
+data ConfigSend = ConfigSend
+  { configReq :: Text
+  } deriving (Generic, Show)
+
+instance ToJSON ConfigSend where
+  toJSON     = Aeson.genericToJSON (removePrefix "config")
+  toEncoding = Aeson.genericToEncoding (removePrefix "config")
+
+data ConfigReceive = ConfigReceive
+  { args :: [Text]
+  } deriving (Generic, Show)
+
+instance FromJSON ConfigReceive
+
+getConfig :: IO ConfigReceive
+getConfig = do
+  json <- toJSVal $ Aeson.toJSON $ ConfigSend "config"
+  resp <- fromJSVal =<< requestMessage json
+  case resp >>= fromJSON of
+    Nothing -> Prelude.error $ "Config malformed!"
+    Just c -> pure c
 
 data RunProverSend = RunProverSend
   { proverReq :: Text
@@ -212,19 +189,13 @@ data RunProverReceive = RunProverReceive
 
 instance FromJSON RunProverReceive
 
-instance RunProver IO where
-  runProver _ (Prover _ _ path args _ _ _ _) _ timeLimit memoryLimit task = do
-    req <- toJSVal $ Aeson.toJSON $ RunProverSend "prover" (Text.pack path)
-      (map (Text.pack . setLimits timeLimit memoryLimit) args) task
+instance RunProverContext WEB where
+  runProver WEB bparams = do
+    req <- toJSVal $ Aeson.toJSON $ RunProverSend "prover"
+       (UTF8.decode $ head $ Bash._script bparams) 
+       (map UTF8.decode $ tail $ Bash._script bparams)
+       (UTF8.decode $ Bash._input bparams)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure (0, proverOut t)
       _ -> Prelude.error $ "Ensure in JS that this never happens!"
-
-setLimits :: Int -> Int -> String -> String
-setLimits timeLimit memoryLimit = go
-  where
-    go ('%':'t':rs) = show timeLimit ++ go rs
-    go ('%':'m':rs) = show memoryLimit ++ go rs
-    go (s:rs) = s : go rs
-    go [] = []

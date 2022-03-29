@@ -7,6 +7,8 @@
     
     (If mmorph can't be build on your system, you may need to use v0.6.2.0 
     , see [this issue](https://github.com/reflex-frp/reflex-platform/issues/717))
+    (Also, see [this issue](https://github.com/reflex-frp/reflex-platform/issues/770)
+      if you get an error "cannot coerce null to a string")
 
  2. Copy `Naproche-SAD` into `frontend/Naproche-SAD`
     (or tell me how to get submodules to run without larger problems).
