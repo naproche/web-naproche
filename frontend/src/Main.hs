@@ -198,6 +198,6 @@ instance Program.RunProverContext WEB where
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure $ Process_Result.make 0
-        (map UTF8.encode (proverOut resp))
-        (map UTF8.encode (proverErr resp)) Timing.zero
+        (map UTF8.encode (proverOut t))
+        (map UTF8.encode (proverErr t)) Timing.zero
       _ -> Prelude.error $ "Ensure in JS that this never happens!"
