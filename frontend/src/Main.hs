@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE JavaScriptFFI, CPP #-}
@@ -30,7 +31,7 @@ import qualified Data.ByteString.Lazy as BS
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Lazy as Text
+import qualified Data.Text.Lazy as LText
 import qualified Prelude as Prelude
 import qualified System.Console.GetOpt as GetOpt
 import qualified System.Environment as Environment
@@ -45,7 +46,6 @@ import qualified Isabelle.UTF8 as UTF8
 import qualified Isabelle.Position as Position
 import qualified Isabelle.YXML as YXML
 import qualified Isabelle.Process_Result as Process_Result
-import qualified Isabelle.Isabelle_System as Isabelle_System
 import qualified Isabelle.File
 import Isabelle.Library
 
@@ -65,11 +65,9 @@ main  = do
   args0 <- args $ getConfig
   (opts0, pk, fileArg) <- SAD.Main.readArgs args0
   text0 <- (map (uncurry ProofTextInstr) (reverse opts0) ++) <$> case fileArg of
-    Nothing -> do
-      stdin <- getContents
-      pure [ProofTextInstr Position.none $ GetArgument (Text pk) (Text.pack stdin)]
+    Nothing -> Prelude.error $ "Reading from stdin not implemented"
     Just name -> do
-      pure [ProofTextInstr Position.none $ GetArgument (File pk) (Text.pack name)]
+      pure [ProofTextInstr Position.none $ GetArgument (File pk) (LText.pack name)]
   let opts1 = map snd opts0
 
   if getInstr helpParam opts1 then
@@ -122,7 +120,7 @@ instance FromJSON ReadLibraryReceive
 
 instance File.MonadFile IO where
   read f = do
-    req <- toJSVal $ Aeson.toJSON $ ReadLibrarySend "library" (Text.pack f)
+    req <- toJSVal $ Aeson.toJSON $ ReadLibrarySend "library" (UTF8.decode f)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure (make_bytes $ fileContent t)
@@ -141,9 +139,9 @@ instance ToJSON CommSend where
 
 data WEB = WEB
 
-instance MessageExchangeContext WEB where
+instance Program.MessageExchangeContext WEB where
   read_message WEB = Prelude.error $ "Reading messages is not implemented"
-  write_message (PIDE socket _) msgs = do
+  write_message WEB msgs = do
     forM msgs $ \msg -> do
       json <- toJSVal $ Aeson.toJSON $ CommSend "output" (UTF8.decode msg) 
       sendMessage json
@@ -189,12 +187,12 @@ data RunProverReceive = RunProverReceive
 
 instance FromJSON RunProverReceive
 
-instance RunProverContext WEB where
+instance Program.RunProverContext WEB where
   runProver WEB bparams = do
     req <- toJSVal $ Aeson.toJSON $ RunProverSend "prover"
-       (UTF8.decode $ head $ Bash._script bparams) 
-       (map UTF8.decode $ tail $ Bash._script bparams)
-       (UTF8.decode $ Bash._input bparams)
+       (UTF8.decode $ head $ Bash.get_script bparams) 
+       (map UTF8.decode $ tail $ Bash.get_script bparams)
+       (UTF8.decode $ Bash.get_input bparams)
     resp <- fromJSVal =<< requestMessage req
     case resp >>= fromJSON of
       Just t -> pure (0, proverOut t)
