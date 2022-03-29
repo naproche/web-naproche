@@ -55,12 +55,17 @@ import SAD.Data.Instr
 import qualified Naproche.Console as Console
 import qualified Naproche.File as File
 import qualified Naproche.Program as Program
+import qualified Naproche.Prover as Prover
 import qualified SAD.Core.Message as Message
 import qualified SAD.Main
 
 main :: IO ()
 main  = do
   Console.setup
+
+  -- Create dummy env variables for all provers
+  forM_ Prover.list $ \p -> do
+    Environment.setEnv (UTF8.decode (Prover.get_variable p)) (UTF8.decode (Prover.get_name p))
 
   -- command line and init file
   args0 <- args <$> getConfig
